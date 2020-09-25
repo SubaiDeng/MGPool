@@ -41,7 +41,6 @@ class Net(nn.Module):
         self.hidden_dim = args.hidden_dim
         self.out_dim = args.out_dim
         self.gcn_layer_list = nn.ModuleList()
-        self.classify_list = nn.ModuleList()
         self.bn_list = nn.ModuleList()
         self.device = args.device
         self.feat_drop = args.feat_drop
@@ -52,43 +51,45 @@ class Net(nn.Module):
             self.gcn_layer_list.append(GCNLayer(self.hidden_dim, self.hidden_dim, self.feat_drop))
         self.gcn_pooling_layer = GCNLayer(self.hidden_dim, self.hidden_dim, self.feat_drop)
 
-        for l in range(self.num_layers):
-            self.classify_list.append(nn.Linear(self.hidden_dim, self.out_dim))
-            # self.bn_list.append(nn.BatchNorm1d(self.hidden_dim))
+        # self.classify_list = nn.ModuleList()
+        # for l in range(self.num_layers):
+        #     self.classify_list.append(nn.Linear(self.hidden_dim, self.out_dim))
+        #     # self.bn_list.append(nn.BatchNorm1d(self.hidden_dim))
 
+        self.classify = nn.Linear(self.hidden_dim, self.out_dim)
 
-    def split_subgraph(self, g, fea, seglen):
-        idx = 0
-        adj = g.to_dense().numpy()
-        adj_list = list([])
-        fea_list = list([])
-        for num_node in seglen:
-            new_idx = idx + num_node
-            sub_adj = adj[idx:new_idx, idx:new_idx]
-            sub_fea = fea[idx:new_idx]
-            adj_list.append(sub_adj)
-            fea_list.append(sub_fea)
-            idx = new_idx
+    # def split_subgraph(self, g, fea, seglen):
+    #     idx = 0
+    #     adj = g.to_dense().numpy()
+    #     adj_list = list([])
+    #     fea_list = list([])
+    #     for num_node in seglen:
+    #         new_idx = idx + num_node
+    #         sub_adj = adj[idx:new_idx, idx:new_idx]
+    #         sub_fea = fea[idx:new_idx]
+    #         adj_list.append(sub_adj)
+    #         fea_list.append(sub_fea)
+    #         idx = new_idx
+    #
+    #     return adj_list, fea_list
 
-        return adj_list, fea_list
-
-    def build_graph(self, adj, landmarks_list):
-        pool_g = dgl.DGLGraph()
-        id_list_x = []
-        id_list_y = []
-        val_list = []
-        for iter_i, row in enumerate(adj):
-            for iter_j, element in enumerate(row):
-                id_list_x.append(iter_i)
-                id_list_y.append(iter_j)
-                val_list.append(element)
-        sp_graph = coo_matrix((val_list, (id_list_x, id_list_y)))
-        pool_g = dgl.from_scipy(sp_graph)
-        pool_fea = torch.tensor([])
-        for landmark in landmarks_list:
-            pool_fea = torch.cat((pool_fea, landmark), dim=0)
-        pool_fea = pool_fea.reshape(len(landmarks_list), -1)
-        return pool_g, pool_fea
+    # def build_graph(self, adj, landmarks_list):
+    #     pool_g = dgl.DGLGraph()
+    #     id_list_x = []
+    #     id_list_y = []
+    #     val_list = []
+    #     for iter_i, row in enumerate(adj):
+    #         for iter_j, element in enumerate(row):
+    #             id_list_x.append(iter_i)
+    #             id_list_y.append(iter_j)
+    #             val_list.append(element)
+    #     sp_graph = coo_matrix((val_list, (id_list_x, id_list_y)))
+    #     pool_g = dgl.from_scipy(sp_graph)
+    #     pool_fea = torch.tensor([])
+    #     for landmark in landmarks_list:
+    #         pool_fea = torch.cat((pool_fea, landmark), dim=0)
+    #     pool_fea = pool_fea.reshape(len(landmarks_list), -1)
+    #     return pool_g, pool_fea
 
     def entropy_cal(self, p):
         log_p = torch.log(p)
@@ -102,7 +103,7 @@ class Net(nn.Module):
         seglen = batch_graph.batch_num_nodes().cpu().numpy()
         # if self.device==torch.device("cuda:0"):
         #     graph_emb_list = graph_emb_list.cuda()
-        if self.device=='cuda':
+        if self.device=='cuda:0':
             graph_emb_list = graph_emb_list.cuda()
         idx = 0
         for num_node in seglen:
@@ -116,25 +117,28 @@ class Net(nn.Module):
 
     def forward(self, g):
         score_over_layer = 0
-        h = g.ndata['feature']
-        # for l in range(self.num_layers):
-        #     h = self.gcn_layer_list[l](g, h)
-        #     h = F.elu(h)
-        #
-        # lambda_list = self.entropy_cal(F.softmax(self.classify(h), dim=1))
-        # pooled_h = self.weighted_pooling(g, lambda_list, h)
-        # t = self.classify(pooled_h)
-        # score_over_layer += F.dropout(t, self.final_drop, training=self.training)
+        h = g.ndata['feat']
 
+        # Last layer for entropy Calculation
         for l in range(self.num_layers):
             h = self.gcn_layer_list[l](g, h)
             h = F.elu(h)
-            # lambda_list = self.entropy_cal(F.softmax(self.classify_list[l](self.bn_list[l](h)), dim=1))
-            lambda_list = self.entropy_cal(F.softmax(self.classify_list[l](h), dim=1))
-            pooled_h = self.weighted_pooling(g, lambda_list, h)
-            # t = self.classify_list[l](self.bn_list[l](pooled_h))
-            t = self.classify_list[l](pooled_h)
-            score_over_layer += F.dropout(t, self.final_drop, training=self.training)
+
+        lambda_list = self.entropy_cal(F.softmax(self.classify(h), dim=1))
+        pooled_h = self.weighted_pooling(g, lambda_list, h)
+        t = self.classify(pooled_h)
+        score_over_layer += F.dropout(t, self.final_drop, training=self.training)
+
+        # # All layers for entropy Calculation
+        # for l in range(self.num_layers):
+        #     h = self.gcn_layer_list[l](g, h)
+        #     h = F.elu(h)
+        #     # lambda_list = self.entropy_cal(F.softmax(self.classify_list[l](self.bn_list[l](h)), dim=1))
+        #     lambda_list = self.entropy_cal(F.softmax(self.classify_list[l](h), dim=1))
+        #     pooled_h = self.weighted_pooling(g, lambda_list, h)
+        #     # t = self.classify_list[l](self.bn_list[l](pooled_h))
+        #     t = self.classify_list[l](pooled_h)
+        #     score_over_layer += F.dropout(t, self.final_drop, training=self.training)
 
 
 
@@ -178,12 +182,15 @@ def accuracy(prediction, labels):
 
 def val(model, data_loader, args):
     model.eval()
-    acc = 0
+    loss_func = nn.CrossEntropyLoss()
+    acc_list = []
+    loss_list = []
     for iter, (bg, label) in enumerate(data_loader):
         prediction = model(bg)
-        if args.device=='cuda':
+        if args.device == 'cuda:0':
             label = label.cuda()
-        acc += accuracy(prediction, label)
-
-    acc /= (iter+1)
-    return acc
+        acc_list.append(accuracy(prediction, label))
+        loss_list.append(loss_func(prediction, label).detach().item())
+    acc = np.average(acc_list)
+    loss = np.average(loss_list)
+    return acc, loss
