@@ -7,6 +7,8 @@ from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import euclidean_distances
 import numpy as np
 from scipy.sparse import coo_matrix
+import EBGC
+import networkx as nx
 
 
 
@@ -98,9 +100,8 @@ class Net(nn.Module):
         lambda_list = 1-(H/max_H)
         return lambda_list
 
-    def weighted_pooling(self, batch_graph, lambda_list, h):
+    def weighted_pooling(self, seglen, lambda_list, h):
         graph_emb_list = torch.tensor([])
-        seglen = batch_graph.batch_num_nodes().cpu().numpy()
         # if self.device==torch.device("cuda:0"):
         #     graph_emb_list = graph_emb_list.cuda()
         if self.device=='cuda:0':
@@ -115,17 +116,67 @@ class Net(nn.Module):
             idx += num_node
         return graph_emb_list
 
-    def forward(self, g):
+    def cluster_pooling(self, batch_g):
+        g_lists = dgl.unbatch(batch_g)
+        pooled_g_list = list()
+        pooled_idx_list = list()
+        pooled_adj_list = list()
+        pooled_emb_list = list()
+        for i, g in enumerate(g_lists):
+            g = g.to('cpu')
+            # print(str(i) + ' graph pooling')
+            node_labels = g.ndata['label']
+            node_emb = g.ndata['emb']
+            n_cluster = int(torch.max(node_labels) + 1)
+            n_node = len(node_emb)
+            node_cluster = torch.zeros([n_node, n_cluster])
+            adj = g.adj().to_dense()
+            if n_cluster == 1:
+                # One Cluster
+                pooled_emb = node_emb
+                pooled_adj = adj
+                idx = torch.nonzero(pooled_adj)
+            else:
+                node_cluster[list(range(n_node)), list(node_labels)] = 1
+                pooled_emb = torch.mm(node_cluster.T, g.ndata['emb'])
+                pooled_adj = torch.mm(torch.mm(node_cluster.T, adj), node_cluster)
+                idx = torch.nonzero(pooled_adj)
+
+            x_id = idx[:, 0]
+            y_id = idx[:, 1]
+            pooled_g = dgl.graph((x_id, y_id), num_nodes=len(pooled_emb))
+            pooled_g.ndata['emb'] = pooled_emb
+            pooled_g = pooled_g.to('cuda:0')
+            pooled_g_list.append(pooled_g)
+
+
+        return pooled_g_list
+
+    def forward(self, batch_g):
+
         score_over_layer = 0
-        h = g.ndata['feat']
+        h = batch_g.ndata['feat']
+
 
         # Last layer for entropy Calculation
         for l in range(self.num_layers):
-            h = self.gcn_layer_list[l](g, h)
+            h = self.gcn_layer_list[l](batch_g, h)
             h = F.elu(h)
 
+        # src_ids = torch.tensor([2, 3, 4])
+        # dst_ids = torch.tensor([1, 2, 3])
+        # demo_g = dgl.graph((src_ids, dst_ids))
+        # demo_g.to('cuda:0')
+
+        batch_g.ndata['emb'] = h
+        pooled_g_list = self.cluster_pooling(batch_g)
+
+        seglen = [len(x) for x in pooled_g_list]
+        poooled_batch_g = dgl.batch(pooled_g_list)
+        h = poooled_batch_g.ndata['emb']
+
         lambda_list = self.entropy_cal(F.softmax(self.classify(h), dim=1))
-        pooled_h = self.weighted_pooling(g, lambda_list, h)
+        pooled_h = self.weighted_pooling(seglen, lambda_list, h)
         t = self.classify(pooled_h)
         score_over_layer += F.dropout(t, self.final_drop, training=self.training)
 
@@ -135,6 +186,7 @@ class Net(nn.Module):
         #     h = F.elu(h)
         #     # lambda_list = self.entropy_cal(F.softmax(self.classify_list[l](self.bn_list[l](h)), dim=1))
         #     lambda_list = self.entropy_cal(F.softmax(self.classify_list[l](h), dim=1))
+
         #     pooled_h = self.weighted_pooling(g, lambda_list, h)
         #     # t = self.classify_list[l](self.bn_list[l](pooled_h))
         #     t = self.classify_list[l](pooled_h)

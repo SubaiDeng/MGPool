@@ -8,6 +8,8 @@ from tqdm import tqdm
 from sklearn.model_selection import KFold
 import numpy as np
 import random
+import EBGC
+import os
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -44,16 +46,17 @@ def arg_parse():
     parser.add_argument('--num_random')
 
     parser.set_defaults(
-        dataset='PROTEINS_full',
-        # dataset='NCI1',
-        batch_size=64,
-        epoch_num=300,
+        # dataset='PROTEINS_full',
+        # dataset='NCI109',
+        dataset='DD',
+        batch_size=32,
+        epoch_num=100,
         lr=0.005,
-        num_layers=3,
-        hidden_dim=64,
+        num_layers=4,
+        hidden_dim=8,
         device='cuda',
-        feat_drop=0.05,
-        final_drop=0.5,
+        feat_drop=0,
+        final_drop=0,
         num_kfold=10,
         num_random=1,
     )
@@ -112,7 +115,20 @@ def main():
     args.out_dim = num_class
 
     random_seed = list(range(args.num_random))
+    # random_seed = list([1])
     test_acc_list = []
+
+    # # Entropy-based Graph Clustering
+    # for i, graph in enumerate(graph_list):
+    #     graph = graph.cpu().to_networkx()
+    #     EBGC_cluster = EBGC.EBGC()
+    #     cluster_result = EBGC_cluster.fit(graph)
+    #     _, node_entropy_labels = np.nonzero(cluster_result)
+    #     t = np.array(node_entropy_labels).reshape(-1, 1)
+    #     graph_list[i].ndata['label']= torch.tensor(t).to('cuda:0')
+    #     print(str(i) +' Graph Clustering Finished')
+    # print("Finished Clustering")
+
     for seed in random_seed:
         np.random.seed(seed)
         torch.manual_seed(seed)
@@ -122,6 +138,9 @@ def main():
 
         kf = KFold(n_splits=args.num_kfold, random_state=seed, shuffle=True)
         for iter, (train_index, test_index) in enumerate(kf.split(graph_list)):
+            print("Fold:{}".format(iter))
+            # if iter < 3:
+            #     continue
             train_loader, val_loader, test_loader = load_data.split_dataset(args, train_index, test_index, graph_list, label_list)
             train(args, train_loader, val_loader)
             test_acc = test(test_loader, args)
