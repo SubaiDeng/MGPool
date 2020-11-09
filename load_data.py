@@ -6,6 +6,7 @@ from torch.utils.data import Dataset
 from torch.utils.data import random_split
 import EBGC
 import numpy as np
+from infomap import Infomap
 
 
 
@@ -71,16 +72,32 @@ def load_data(args):
     dataset = LegacyTUDataset(name=args.dataset)
     graph_list = list([])
 
-
+    # graph_lists = dataset.graph_lists[:100]
     for i, g in enumerate(dataset.graph_lists):
         g.ndata['feat'] = g.ndata['feat'].float()
-        # Entropy-based Graph Clustering
-        nx_g = g.to_networkx()
-        EBGC_cluster = EBGC.EBGC()
-        cluster_result = EBGC_cluster.fit(nx_g)
-        _, node_entropy_labels = np.nonzero(cluster_result)
-        t = np.array(node_entropy_labels).reshape(-1, 1)
+
+        # # Entropy-based Graph Clustering
+        # nx_g = g.to_networkx()
+        # EBGC_cluster = EBGC.EBGC()
+        # cluster_result = EBGC_cluster.fit(nx_g)
+        # _, node_entropy_labels = np.nonzero(cluster_result)
+        # t = np.array(node_entropy_labels).reshape(-1, 1)
+        # g.ndata['label'] = torch.tensor(t)
+
+        # InfoMap Graph clustering
+        x_id, y_id = g.edges()
+        node_labels = np.zeros([g.num_nodes()])
+        im = Infomap("--flow-model undirected --silent")
+        for iter_edge in range(len(x_id)):
+            im.add_link(x_id[iter_edge], y_id[iter_edge])
+        im.run()
+        for node in im.tree:
+            if node.is_leaf:
+                node_labels[node.node_id] = node.module_id
+                # print(node.node_id, node.module_id)
+        t = np.array(node_labels).reshape(-1, 1)
         g.ndata['label'] = torch.tensor(t)
+
         if args.device == 'cuda:0':
             g = g.to('cuda:0')
         graph_list.append(g)
@@ -92,7 +109,8 @@ def load_data(args):
     if args.device == 'cuda:0':
         label_list = label_list.to('cuda:0')
     # label_list = list(dataset.graph_labels.numpy().flatten())
-    
+
+    # label_list = label_list[:100]
     return graph_list, label_list, fea_dim, num_class
 
 
