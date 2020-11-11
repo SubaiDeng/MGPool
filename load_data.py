@@ -7,6 +7,8 @@ from torch.utils.data import random_split
 import EBGC
 import numpy as np
 from infomap import Infomap
+import networkx as nx
+import matplotlib.pyplot as plt
 
 
 
@@ -23,56 +25,38 @@ class MyDataset(Dataset):
         return self.list_len
 
 
+def draw_graph(g, node_labels):
+    # pos = nx.spring_layout(g)
+    # nx.draw_spring(g, with_labels=False)
+    # nx.draw_networkx_edge_labels(g, pos, font_size=14, alpha=0.5, rotate=True)
+
+    k = 1/(np.max(node_labels))
+    val_map = {x: x*k for x in node_labels}
+    values = [val_map.get(node_labels[node]) for node in g.nodes()]
+
+    nx.draw(g, cmap=plt.get_cmap('viridis'), node_color=values, with_labels=True, font_color='white')
+
+    plt.axis('off')
+    plt.show()
+
+
 def collate(samples):
     # The input `samples` is a list of pairs
     #  (graph, label).
-    graphs, labels = map(list, zip(*samples))
+    graphs_list, labels = map(list, zip(*samples))
+    graphs = list([x[0]for x in graphs_list])
+    masked_graphs = list([x[1]for x in graphs_list])
     batched_graph = dgl.batch(graphs)
-    return batched_graph, torch.tensor(labels)
-
-
-# def load_data(args):
-#     # TUDataset.url = 'https://ls11-www.cs.tu-dortmund.de/people/morris/graphkerneldatasets'
-#
-#     # # NCI1/NCI109/DD
-#     # dataset = TUDataset(name=args.dataset)
-#     # element_set = set([])
-#     # for i in map(lambda x: set(list(x.ndata['node_labels'].numpy().flatten())), dataset.graph_lists):
-#     #     element_set = element_set.union(i)
-#     # element_list = list(element_set)
-#     # node_label_map, node_label_id, node_one_hot = Get_Onehot_Map(element_list)
-#
-#     # PROTEINS
-#     dataset = LegacyTUDataset(name=args.dataset)
-#     t = dataset.graph_lists
-#     for i in dataset.graph_lists:
-#         print(i.ndata)
-#         t = i.ndata['feat']
-#         pass
-#
-#     graph_list = list([])
-#     label_list = list(dataset.graph_labels.numpy().flatten())
-#     for iter, g in enumerate(dataset.graph_lists):
-#         node_label = list(map(lambda x: node_label_map[x.numpy()[0]], g.ndata['node_labels']))
-#         g.ndata['feature'] = torch.tensor(node_label)
-#         if args.device == 'cuda:0':
-#             g = g.to('cuda:0')
-#             g.ndata['feature'] = g.ndata['feature'].cuda()
-#         graph_list.append(g)
-#         # adj = g.adj().to_dense().numpy()
-#         # graph_eigen_list = eigen_calculation(adj, args.pool_sizes, args.H)
-#
-#     fea_dim = dataset.graph_lists[0].ndata['feature'].shape[1]
-#     num_class = dataset.num_labels[0]
-#
-#     return graph_list, label_list, fea_dim, num_class
-
+    batched_masked_graph = dgl.batch(masked_graphs)
+    batched_graph_merge = (batched_graph, batched_masked_graph)
+    return batched_graph_merge, torch.tensor(labels)
 
 def load_data(args):
     dataset = LegacyTUDataset(name=args.dataset)
     graph_list = list([])
 
     # graph_lists = dataset.graph_lists[:100]
+    # for i, g in enumerate(graph_lists):
     for i, g in enumerate(dataset.graph_lists):
         g.ndata['feat'] = g.ndata['feat'].float()
 
@@ -82,7 +66,7 @@ def load_data(args):
         # cluster_result = EBGC_cluster.fit(nx_g)
         # _, node_entropy_labels = np.nonzero(cluster_result)
         # t = np.array(node_entropy_labels).reshape(-1, 1)
-        # g.ndata['label'] = torch.tensor(t)
+        # g.ndata['label'] = torch.tensor
 
         # InfoMap Graph clustering
         x_id, y_id = g.edges()
@@ -93,15 +77,39 @@ def load_data(args):
         im.run()
         for node in im.tree:
             if node.is_leaf:
-                node_labels[node.node_id] = node.module_id
+                node_labels[node.node_id] = node.module_id - 1
                 # print(node.node_id, node.module_id)
         t = np.array(node_labels).reshape(-1, 1)
+
         g.ndata['label'] = torch.tensor(t)
+
+        # # Draw graph
+        # demo_graph = g.to_networkx()
+        # draw_graph(demo_graph, node_labels)
+
+        # Masked graph
+        label_list = node_labels
+        n_cluster = len(set(label_list))
+        node_node_mask = torch.zeros([len(g), len(g)])
+        for node_label in range(n_cluster):
+            node_labels_id = np.array(np.where(label_list == node_label)).reshape(-1)
+            for node_id in node_labels_id:
+                node_node_mask[node_id, node_labels_id] = 1
+        masked_g_adj = g.adj().to_dense()
+        cluster_adj = torch.mul(masked_g_adj, node_node_mask)
+        masked_g_edges = cluster_adj.nonzero().t()
+
+        masked_g = dgl.graph((masked_g_edges[0], masked_g_edges[1]), num_nodes=g.num_nodes())
+        masked_g.ndata['feat'] = g.ndata['feat'].clone().detach()
+        masked_g.ndata['label'] = g.ndata['label'].clone().detach()
+        masked_g.ndata['_ID'] = g.ndata['_ID'].clone().detach()
 
         if args.device == 'cuda:0':
             g = g.to('cuda:0')
-        graph_list.append(g)
+            masked_g = masked_g.to('cuda:0')
+        graph_list.append((g, masked_g))
         print('Load ' + str(i) + ' graph finished.')
+
     fea_dim = dataset.graph_lists[0].ndata['feat'].shape[1]
     num_class = dataset.num_labels
 

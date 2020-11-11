@@ -62,9 +62,9 @@ def arg_parse():
         dataset='NCI1',
         # dataset='DD',
         batch_size=64,
-        epoch_num=300,
+        epoch_num=500,
         lr=0.005,
-        hidden_dim=128,
+        hidden_dim=64,
         device='cuda',
         feat_drop=0,
         final_drop=0.5,
@@ -95,8 +95,8 @@ def train(args, train_loader, val_loader):
         losses_list = []
         train_acc_list = []
         model.train()
-        for bg, label in train_loader:
-            prediction = model(bg)
+        for batched_graph_merge, label in train_loader:
+            prediction = model(batched_graph_merge[0], batched_graph_merge[1])
             if args.device == 'cuda:0':
                 label = label.cuda()
             loss = loss_func(prediction, label)
@@ -110,14 +110,13 @@ def train(args, train_loader, val_loader):
         train_acc = np.average(train_acc_list)
         val_acc, val_loss = val(model, val_loader, args)
         if val_loss < min_loss:
-            # torch.save(model.state_dict(), MODEL_PATH + 'Model-NCI' + '.kpl')
+            torch.save(model.state_dict(), MODEL_PATH + 'Model-NCI' + '.kpl')
             min_loss = val_loss
             print("\n EPOCH:{}\t Train Loss:{:.4f}\tTrain ACC: {:.4f}\t\tVal Loss:{:.4f}\t Val ACC: {:.4f}\tModel saved at epoch {}".format(epoch, loss, train_acc, val_loss, val_acc, epoch))
             saved_epoch_id = epoch
         else:
             print("\n EPOCH:{}\t Train Loss:{:.4f}\tTrain ACC: {:.4f}\t\tVal Loss:{:.4f}\t Val ACC: {:.4f}".format(epoch, loss, train_acc, val_loss, val_acc))
     print("SUCCESS: Model Training Finished.")
-    torch.save(model.state_dict(), MODEL_PATH + 'Model-NCI' + '.kpl')
     return saved_epoch_id
 
 

@@ -285,13 +285,14 @@ class Net(nn.Module):
 
         return pooled_g_list
 
-    def forward(self, batch_g):
+    def forward(self, batch_g, batch_masked_g):
 
         score_over_layer = 0
-        h = batch_g.ndata['feat']
-
-        h_gcn = self.GCN(batch_g, h)
-        h_gin = self.GIN(batch_g, h)
+        h_gcn = batch_g.ndata['feat']
+        h_gcn = self.GCN(batch_g, h_gcn)
+        
+        h_gin = batch_masked_g.ndata['feat']
+        h_gin = self.GIN(batch_masked_g, h_gin)
         h = torch.cat([h_gcn, h_gin], dim=1)
 
         batch_g.ndata['emb'] = h
@@ -323,8 +324,8 @@ def val(model, data_loader, args):
     loss_func = nn.CrossEntropyLoss()
     acc_list = []
     loss_list = []
-    for iter, (bg, label) in enumerate(data_loader):
-        prediction = model(bg)
+    for iter, (batched_graph_merge, label) in enumerate(data_loader):
+        prediction = model(batched_graph_merge[0], batched_graph_merge[1])
         if args.device == 'cuda:0':
             label = label.cuda()
         acc_list.append(accuracy(prediction, label))
