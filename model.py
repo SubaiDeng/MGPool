@@ -84,8 +84,8 @@ class GIN(nn.Module):
         # print("h:{}".format(edges.src['h']))
         # print("w:{}".format(edges.data['w']))
         # h = torch.mul(edges.data['w'].float().reshape(1,-1), edges.src['h'].float(),)
-        # h = edges.data['w'].float() * edges.src['h'].float().t()
-        h = edges.src['h'].float()
+        h = (edges.data['w'].float() * edges.src['h'].float().t()).t()
+        # h = edges.src['h'].float()
         # a_1 = edges.data['w'].float()
         # a_2 = edges.src['h'].float()
         return {'msg_h': h}
@@ -138,10 +138,25 @@ class GCNLayer(nn.Module):
     def __init__(self, in_dim, hidden_dim, feat_drop=None):
         super(GCNLayer, self).__init__()
         self.linear = nn.Linear(in_dim, hidden_dim)
-        self.gcn_msg = fn.copy_src(src='h', out='m')
-        self.gcn_reduce = fn.sum(msg='m', out='h')
+        # self.gcn_msg = fn.copy_src(src='h', out='m')
+        # self.gcn_reduce = fn.sum(msg='m', out='h')
         self.feat_drop = feat_drop
         self.bn_layer = torch.nn.BatchNorm1d(hidden_dim)
+        
+    def message_func(self, edges):
+        # print("h:{}".format(edges.src['h']))
+        # print("w:{}".format(edges.data['w']))
+        # h = torch.mul(edges.data['w'].float().reshape(1,-1), edges.src['h'].float(),)
+        h = (edges.data['w'].float() * edges.src['h'].float().t()).t()
+        # h = edges.src['h'].float()
+        # a_1 = edges.data['w'].float()
+        # a_2 = edges.src['h'].float()
+        return {'msg_h': h}
+
+    def reduce_func(self, nodes):
+        h = torch.sum(nodes.mailbox['msg_h'], dim=1)
+        h = nodes.data['h'] + h
+        return {'h': h}
 
     def forward(self, g, h):
         # Creating a local scope so that all the stored ndata and edata
@@ -151,7 +166,7 @@ class GCNLayer(nn.Module):
         h = F.dropout(h, self.feat_drop, training=self.training)
         with g.local_scope():
             g.ndata['h'] = h
-            g.update_all(self.gcn_msg, self.gcn_reduce)
+            g.update_all(self.message_func, self.reduce_func)
             h = g.ndata.pop('h')
             h = self.linear(h)
             return self.bn_layer(h)
@@ -178,8 +193,8 @@ class GCN(nn.Module):
     def forward(self, g, h):
         for i in range(self.num_layers):
             h = self.gcn_layer_list[i](g, h)
-            h = F.elu(h)
-
+            h = F.relu(h)
+            
         return h
 
 
@@ -237,8 +252,7 @@ class Net(nn.Module):
         graph_emb_list = torch.tensor([])
         # if self.device==torch.device("cuda:0"):
         #     graph_emb_list = graph_emb_list.cuda()
-        if self.device=='cuda:0':
-            graph_emb_list = graph_emb_list.cuda()
+        graph_emb_list = graph_emb_list.to(self.device)
         idx = 0
         for num_node in seglen:
             # num_node = len(graph.g)
@@ -275,11 +289,17 @@ class Net(nn.Module):
                 pooled_adj = torch.mm(torch.mm(node_cluster.T, adj), node_cluster)
                 idx = torch.nonzero(pooled_adj)
 
+            for i in range(len(pooled_adj)):
+                pooled_adj[i,i] = 1
+                
             x_id = idx[:, 0]
             y_id = idx[:, 1]
+            weight = pooled_adj[x_id,y_id]
+            
             pooled_g = dgl.graph((x_id, y_id), num_nodes=len(pooled_emb))
+            pooled_g.edata['w'] = weight
             pooled_g.ndata['emb'] = pooled_emb
-            pooled_g = pooled_g.to('cuda:0')
+            pooled_g = pooled_g.to(self.device)
             pooled_g_list.append(pooled_g)
 
 
@@ -326,10 +346,10 @@ def val(model, data_loader, args):
     loss_list = []
     for iter, (batched_graph_merge, label) in enumerate(data_loader):
         prediction = model(batched_graph_merge[0], batched_graph_merge[1])
-        if args.device == 'cuda:0':
-            label = label.cuda()
+        label = label.to(args.device)
         acc_list.append(accuracy(prediction, label))
         loss_list.append(loss_func(prediction, label).detach().item())
     acc = np.average(acc_list)
-    loss = np.average(loss_list)
+    # loss = np.average(loss_list)
+    loss = np.sum(loss_list)
     return acc, loss

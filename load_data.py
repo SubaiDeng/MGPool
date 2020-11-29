@@ -82,6 +82,7 @@ def load_data(args):
         t = np.array(node_labels).reshape(-1, 1)
 
         g.ndata['label'] = torch.tensor(t)
+        g.edata['w'] = torch.ones(g.num_edges(), dtype=torch.int32)
 
         # # Draw graph
         # demo_graph = g.to_networkx()
@@ -103,10 +104,10 @@ def load_data(args):
         masked_g.ndata['feat'] = g.ndata['feat'].clone().detach()
         masked_g.ndata['label'] = g.ndata['label'].clone().detach()
         masked_g.ndata['_ID'] = g.ndata['_ID'].clone().detach()
+        masked_g.edata['w'] = torch.ones(masked_g.num_edges(), dtype=torch.int32)
 
-        if args.device == 'cuda:0':
-            g = g.to('cuda:0')
-            masked_g = masked_g.to('cuda:0')
+        g = g.to(args.device)
+        masked_g = masked_g.to(args.device)
         graph_list.append((g, masked_g))
         print('Load ' + str(i) + ' graph finished.')
 
@@ -114,8 +115,7 @@ def load_data(args):
     num_class = dataset.num_labels
 
     label_list = dataset.graph_labels
-    if args.device == 'cuda:0':
-        label_list = label_list.to('cuda:0')
+    label_list = label_list.to(args.device)
     # label_list = list(dataset.graph_labels.numpy().flatten())
 
     # label_list = label_list[:100]
@@ -144,6 +144,6 @@ def split_dataset(args, train_val_idx, test_idx, graph_list, label_list):
 
     train_loader = DataLoader(training_set, batch_size=args.batch_size, shuffle=True, collate_fn=collate)
     val_loader = DataLoader(validation_set, batch_size=args.batch_size, shuffle=False, collate_fn=collate)
-    test_loader = DataLoader(test_set, batch_size=1, shuffle=False, collate_fn=collate)
+    test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, collate_fn=collate)
 
     return train_loader, val_loader, test_loader

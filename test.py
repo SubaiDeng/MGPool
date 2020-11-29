@@ -1,9 +1,5 @@
-import numpy as np
 
-a = np.array([1, 2, 0, 1])
+for i in range(10-1):
+    print(i)
 
-mask = np.zeros([4,3])
-
-mask[list(range(len(a))), list(a)] = 1
-
-print(mask)
+print (i)

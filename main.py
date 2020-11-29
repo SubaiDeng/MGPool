@@ -47,10 +47,6 @@ def arg_parse():
                         help='The type of the running device')
     parser.add_argument('--feat_drop', type=float,
                         help='feat_drop')
-    parser.add_argument('--H', type=int,
-                        help='The number of H (the top H eigenvector is reserved)')
-    parser.add_argument('--num_landmarks', type=int,
-                        help='The number of the landmark.')
     parser.add_argument('--num_kfold', type=int,
                         help='The number of the kFold crossing validation.')
     parser.add_argument('--num_layers_after_cluster', type=int,
@@ -59,22 +55,22 @@ def arg_parse():
 
     parser.set_defaults(
         # dataset='PROTEINS_full',
-        dataset='NCI1',
-        # dataset='DD',
+        # dataset='NCI109',
+        dataset='DD',
         batch_size=64,
-        epoch_num=500,
+        epoch_num=100,
         lr=0.005,
-        hidden_dim=64,
-        device='cuda',
-        feat_drop=0,
+        hidden_dim=32,
+        device='cuda:0',
+        feat_drop=0.05,
         final_drop=0.5,
         num_kfold=10,
         num_random=1,
         num_layers_after_cluster=1,
 
-        gcn_num_layers=3,
+        gcn_num_layers=4,
         gin_num_layers=3,
-        gin_mlp_num_layers=3,
+        gin_mlp_num_layers=1,
         gin_graph_pooling_type='sum',
         gin_neighbor_pooling_type='sum',
         learn_eps=True,
@@ -82,7 +78,7 @@ def arg_parse():
     return parser.parse_args()
 
 
-def train(args, train_loader, val_loader):
+def train(args, train_loader, val_loader, test_loader):
 
     model = Net(args).to(args.device)
     saved_epoch_id = 0
@@ -91,14 +87,14 @@ def train(args, train_loader, val_loader):
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     min_loss = 1e10
+    max_acc = 0
     for epoch in tqdm(range(args.epoch_num)):
         losses_list = []
         train_acc_list = []
         model.train()
         for batched_graph_merge, label in train_loader:
             prediction = model(batched_graph_merge[0], batched_graph_merge[1])
-            if args.device == 'cuda:0':
-                label = label.cuda()
+            label = label.to(args.device)
             loss = loss_func(prediction, label)
             optimizer.zero_grad()
             loss.backward()
@@ -109,15 +105,26 @@ def train(args, train_loader, val_loader):
         loss = np.average(losses_list)
         train_acc = np.average(train_acc_list)
         val_acc, val_loss = val(model, val_loader, args)
-        if val_loss < min_loss:
+        test_acc, test_loss = val(model, test_loader, args)
+        # if val_loss < min_loss:
+        if val_acc > max_acc:
             torch.save(model.state_dict(), MODEL_PATH + 'Model-NCI' + '.kpl')
             min_loss = val_loss
-            print("\n EPOCH:{}\t Train Loss:{:.4f}\tTrain ACC: {:.4f}\t\tVal Loss:{:.4f}\t Val ACC: {:.4f}\tModel saved at epoch {}".format(epoch, loss, train_acc, val_loss, val_acc, epoch))
+            max_acc = val_acc
+            print("\n EPOCH:{}\t "
+                  "Train Loss:{:.4f}\tTrain ACC: {:.4f}\t"
+                  "Val Loss:{:.4f}\t Val ACC: {:.4f}\t"
+                  "Test Loss:{:.4f}\t Test ACC: {:.4f}\t"
+                  "Model saved at epoch {}".format(epoch, loss, train_acc, val_loss, val_acc, test_loss, test_acc, epoch))
             saved_epoch_id = epoch
+            test_acc_result = test_acc
         else:
-            print("\n EPOCH:{}\t Train Loss:{:.4f}\tTrain ACC: {:.4f}\t\tVal Loss:{:.4f}\t Val ACC: {:.4f}".format(epoch, loss, train_acc, val_loss, val_acc))
+            print("\n EPOCH:{}\t "
+                  "Train Loss:{:.4f}\tTrain ACC: {:.4f}\t"
+                  "Val Loss:{:.4f}\t Val ACC: {:.4f}\t"
+                  "Test Loss:{:.4f}\t Test ACC: {:.4f}\t".format(epoch, loss, train_acc, val_loss, val_acc, test_loss, test_acc))
     print("SUCCESS: Model Training Finished.")
-    return saved_epoch_id
+    return saved_epoch_id, test_acc_result
 
 
 def test(test_loader, args):
@@ -153,8 +160,8 @@ def main():
             # if iter < 3:
             #     continue
             train_loader, val_loader, test_loader = load_data.split_dataset(args, train_index, test_index, graph_list, label_list)
-            saved_epoch_id = train(args, train_loader, val_loader)
-            test_acc = test(test_loader, args)
+            saved_epoch_id, test_acc = train(args, train_loader, val_loader, test_loader)
+            # test_acc = test(test_loader, args)
             test_acc_list.append(test_acc)
             print("\nFold:{} \t Test ACC:{:.4f}".format(iter, test_acc))
         acc_avg = np.average(test_acc_list)
