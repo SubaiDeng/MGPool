@@ -287,10 +287,10 @@ class Net(nn.Module):
                 pooled_emb = torch.mm(node_cluster.T, g.ndata['emb'])
                 pooled_adj = torch.mm(torch.mm(node_cluster.T, adj), node_cluster)
 
-            idx = torch.nonzero(pooled_adj)
-
             for i in range(len(pooled_adj)):
                 pooled_adj[i,i] = 1
+
+            idx = torch.nonzero(pooled_adj)
 
             x_id = idx[:, 0]
             y_id = idx[:, 1]
