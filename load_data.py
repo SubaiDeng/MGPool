@@ -59,6 +59,7 @@ def load_data(args):
     # for i, g in enumerate(graph_lists):
     for i, g in enumerate(dataset.graph_lists):
         g.ndata['feat'] = g.ndata['feat'].float()
+        t = g.ndata['feat'].float().numpy()
 
         # # Entropy-based Graph Clustering
         # nx_g = g.to_networkx()
@@ -79,14 +80,13 @@ def load_data(args):
             if node.is_leaf:
                 node_labels[node.node_id] = node.module_id - 1
                 # print(node.node_id, node.module_id)
-        t = np.array(node_labels).reshape(-1, 1)
 
-        g.ndata['label'] = torch.tensor(t)
+        g.ndata['label'] = torch.tensor(np.array(node_labels).reshape(-1, 1))
         g.edata['w'] = torch.ones(g.num_edges(), dtype=torch.int32)
 
-        # # Draw graph
-        # demo_graph = g.to_networkx()
-        # draw_graph(demo_graph, node_labels)
+        # Draw graph
+        demo_graph = g.to_networkx()
+        draw_graph(demo_graph, node_labels)
 
         # Masked graph
         label_list = node_labels

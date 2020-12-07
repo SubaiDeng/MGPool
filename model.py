@@ -165,10 +165,10 @@ class GCNLayer(nn.Module):
         # h = self.feat_drop(h)
         h = F.dropout(h, self.feat_drop, training=self.training)
         with g.local_scope():
+            h = self.linear(h)
             g.ndata['h'] = h
             g.update_all(self.message_func, self.reduce_func)
             h = g.ndata.pop('h')
-            h = self.linear(h)
             return self.bn_layer(h)
 
 
@@ -282,16 +282,16 @@ class Net(nn.Module):
                 # One Cluster
                 pooled_emb = node_emb
                 pooled_adj = adj
-                idx = torch.nonzero(pooled_adj)
             else:
                 node_cluster[list(range(n_node)), list(node_labels)] = 1
                 pooled_emb = torch.mm(node_cluster.T, g.ndata['emb'])
                 pooled_adj = torch.mm(torch.mm(node_cluster.T, adj), node_cluster)
-                idx = torch.nonzero(pooled_adj)
+
+            idx = torch.nonzero(pooled_adj)
 
             for i in range(len(pooled_adj)):
                 pooled_adj[i,i] = 1
-                
+
             x_id = idx[:, 0]
             y_id = idx[:, 1]
             weight = pooled_adj[x_id,y_id]
