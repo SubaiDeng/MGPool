@@ -1,5 +1,8 @@
+import torch
+import numpy as np
+from dgl.data import LegacyTUDataset
 
-for i in range(10-1):
-    print(i)
 
-print (i)
+dataset = LegacyTUDataset('IMDB-BINARY')
+
+print('ok')

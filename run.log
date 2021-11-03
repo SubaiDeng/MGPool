@@ -1,0 +1,14 @@
+nohup: ignoring input
+Using backend: pytorch
+Traceback (most recent call last):
+  File "main.py", line 5, in <module>
+    import load_data
+  File "C:\Users\user\OneDrive\Workstation\GraphPooling\Code\MGPool-Lab81-2021-5-04\Modularity_Entropy_Pooling\load_data.py", line 8, in <module>
+    import EBGC
+  File "C:\Users\user\OneDrive\Workstation\GraphPooling\Code\MGPool-Lab81-2021-5-04\Modularity_Entropy_Pooling\EBGC.py", line 3, in <module>
+    import matplotlib.pyplot as plt
+  File "C:\Users\user\anaconda3\lib\site-packages\matplotlib\__init__.py", line 174, in <module>
+    _check_versions()
+  File "C:\Users\user\anaconda3\lib\site-packages\matplotlib\__init__.py", line 159, in _check_versions
+    from . import ft2font
+ImportError: DLL load failed while importing ft2font: The specified module could not be found.

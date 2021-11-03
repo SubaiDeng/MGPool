@@ -120,6 +120,7 @@ class GIN(nn.Module):
     def forward(self, g, h):
 
         # 0 layer
+        h = F.dropout(h, self.feat_drop, training=self.training)
         g.ndata['h'] = h
         for layer in range(self.num_layers):
             self.id_layers = layer
@@ -227,19 +228,30 @@ class Net(nn.Module):
                        args.gin_graph_pooling_type, 
                        args.gin_neighbor_pooling_type,
                        args.learn_eps)
-        self.finalGCN = GCN(self.hidden_dim*2, 
-                            self.hidden_dim*2, 
-                            self.hidden_dim*2, 
-                            args.num_layers_after_cluster, 
+
+        # Original
+        self.finalGCN = GCN(self.hidden_dim*2,
+                            self.hidden_dim*2,
+                            self.hidden_dim*2,
+                            args.num_layers_after_cluster,
                             self.feat_drop)
 
         self.classify = nn.Linear(self.hidden_dim*2, self.out_dim)
 
+        # # Component
+        # self.finalGCN = GCN(self.hidden_dim,
+        #                     self.hidden_dim,
+        #                     self.hidden_dim,
+        #                     args.num_layers_after_cluster,
+        #                     self.feat_drop)
+       
+        # self.classify = nn.Linear(self.hidden_dim, self.out_dim)
+
         # self.classify_list = nn.ModuleList()
         # for l in range(self.num_layers):
         #     self.classify_list.append(nn.Linear(self.hidden_dim, self.out_dim))
-        #     # self.bn_list.append(nn.BatchNorm1d(self.hidden_dim))
-
+        #     # self.bn_list.append(nn.Batch
+        #     m1d(self.hidden_dim))
 
     def entropy_cal(self, p):
         log_p = torch.log(p)
@@ -272,7 +284,7 @@ class Net(nn.Module):
         for i, g in enumerate(g_lists):
             g = g.to('cpu')
             # print(str(i) + ' graph pooling')
-            node_labels = g.ndata['label']
+            node_labels = g.ndata['label'].int()
             node_emb = g.ndata['emb']
             n_cluster = int(torch.max(node_labels) + 1)
             n_node = len(node_emb)
@@ -282,19 +294,24 @@ class Net(nn.Module):
                 # One Cluster
                 pooled_emb = node_emb
                 pooled_adj = adj
+                # print('test')
             else:
                 node_cluster[list(range(n_node)), list(node_labels)] = 1
                 pooled_emb = torch.mm(node_cluster.T, g.ndata['emb'])
                 pooled_adj = torch.mm(torch.mm(node_cluster.T, adj), node_cluster)
+                # print('test')
 
-            for i in range(len(pooled_adj)):
-                pooled_adj[i,i] = 1
+            for j in range(len(pooled_adj)):
+                pooled_adj[j,j] = 0
+                pooled_adj[j,j] = torch.sum(pooled_adj[j])
+                # pooled_adj[j,j] = 1
 
             idx = torch.nonzero(pooled_adj)
 
             x_id = idx[:, 0]
             y_id = idx[:, 1]
             weight = pooled_adj[x_id,y_id]
+            # print(pooled_adj)
             
             pooled_g = dgl.graph((x_id, y_id), num_nodes=len(pooled_emb))
             pooled_g.edata['w'] = weight
@@ -302,17 +319,19 @@ class Net(nn.Module):
             pooled_g = pooled_g.to(self.device)
             pooled_g_list.append(pooled_g)
 
-
         return pooled_g_list
 
-    def forward(self, batch_g, batch_masked_g):
+    def forward(self, batch_g, batch_masked_g, enable_entropy=True):
 
         score_over_layer = 0
         h_gcn = batch_g.ndata['feat']
         h_gcn = self.GCN(batch_g, h_gcn)
+        h = h_gcn
         
         h_gin = batch_masked_g.ndata['feat']
         h_gin = self.GIN(batch_masked_g, h_gin)
+        h = h_gin
+
         h = torch.cat([h_gcn, h_gin], dim=1)
 
         batch_g.ndata['emb'] = h
@@ -323,12 +342,22 @@ class Net(nn.Module):
 
         h = self.finalGCN(pooled_batch_g, h)
 
+        # pooled_g_list = dgl.unbatch(batch_g)  # only gcn version
         seglen = [len(x) for x in pooled_g_list]
         lambda_list = self.entropy_cal(F.softmax(self.classify(h), dim=1))
 
+        # # Flat weight
+        # enable_entropy = False
+
+        if not enable_entropy:
+            lambda_list = torch.ones_like(lambda_list)
+
         pooled_h = self.weighted_pooling(seglen, lambda_list, h)
+
         t = self.classify(pooled_h)
         score_over_layer += F.dropout(t, self.final_drop, training=self.training)
+
+        # score_over_layer = F.softmax(self.classify(F.dropout(pooled_h, self.final_drop, training=self.training)))
 
         return score_over_layer
 
@@ -339,13 +368,13 @@ def accuracy(prediction, labels):
     return correct.item() * 1.0 / len(labels)
 
 
-def val(model, data_loader, args):
+def val(model, data_loader, args, enable_entropy=True):
     model.eval()
     loss_func = nn.CrossEntropyLoss()
     acc_list = []
     loss_list = []
     for iter, (batched_graph_merge, label) in enumerate(data_loader):
-        prediction = model(batched_graph_merge[0], batched_graph_merge[1])
+        prediction = model(batched_graph_merge[0], batched_graph_merge[1], enable_entropy)
         label = label.to(args.device)
         acc_list.append(accuracy(prediction, label))
         loss_list.append(loss_func(prediction, label).detach().item())
